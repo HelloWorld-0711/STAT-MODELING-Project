@@ -1,0 +1,553 @@
+---
+title: "stat proj"
+author: "Zhui"
+date: "2025-12-12"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(glmnet)
+library(knitr)
+library(kableExtra) 
+library(ggplot2)
+```
+
+```{r}
+dat <- read.csv("StudentPerformanceFactors.csv")
+set.seed(42) 
+n <- nrow(dat)
+train_prop <- 0.7 
+
+train_idx <- sample(seq_len(n), size = floor(train_prop * n))
+
+train_dat <- dat[train_idx, ]
+test_dat  <- dat[-train_idx, ]
+```
+
+```{r}
+lm_based <- lm(Exam_Score~.,data = train_dat)
+summary(lm_based)
+sum_lm      <- summary(lm_based)
+adjR2_lm    <- sum_lm$adj.r.squared 
+y_train <- train_dat$Exam_Score
+yhat_lm_train  <- predict(lm_based, newdata = train_dat)
+rmse_lm_train <- sqrt(mean((y_train - yhat_lm_train)^2))
+y_pred_test    <- predict(lm_based, newdata = test_dat)
+y_test         <- test_dat$Exam_Score
+rmse_lm_test   <- sqrt(mean((y_test - y_pred_test)^2))
+# predictions on test set
+y_pred_test <- predict(lm_based, newdata = test_dat)
+y_test <- test_dat$Exam_Score
+mse_test <- mean( (y_test - y_pred_test)^2 )
+rmse_test <- sqrt(mse_test)
+rmse_test
+```
+
+```{r}
+X <- model.matrix(
+  Exam_Score ~ Hours_Studied+Attendance+Parental_Involvement+Access_to_Resources+
+  Extracurricular_Activities+Sleep_Hours+Previous_Scores+Motivation_Level+
+  Internet_Access+Tutoring_Sessions+Family_Income+Teacher_Quality+School_Type+Peer_Influence+
+  Physical_Activity+Learning_Disabilities+
+  Parental_Education_Level+Distance_from_Home+Gender,
+  data = train_dat)[, -1]
+y <- train_dat$Exam_Score
+
+X_test <- model.matrix(
+  Exam_Score ~ Hours_Studied+Attendance+Parental_Involvement+Access_to_Resources+
+  Extracurricular_Activities+Sleep_Hours+Previous_Scores+Motivation_Level+
+  Internet_Access+Tutoring_Sessions+Family_Income+Teacher_Quality+School_Type+Peer_Influence+
+  Physical_Activity+Learning_Disabilities+
+  Parental_Education_Level+Distance_from_Home+Gender,
+  data = test_dat)[, -1]
+y_test <- test_dat$Exam_Score
+
+set.seed(42)
+cv.lasso <- cv.glmnet(X, y, alpha = 1)
+
+pred_lasso_train <- as.vector(
+  predict(cv.lasso, s = "lambda.min", newx = X)
+)
+rmse_lasso_train <- sqrt(mean((y - pred_lasso_train)^2))
+pred_lasso_test <- as.vector(
+  predict(cv.lasso, s = "lambda.min", newx = X_test)
+)
+rmse_lasso_test <- sqrt(mean((y_test - pred_lasso_test)^2))
+best.lambda.lasso <- cv.lasso$lambda.min
+best.lambda.lasso
+```
+
+```{r}
+set.seed(42)
+cv.ridge <- cv.glmnet(X, y, alpha = 0)
+plot(cv.ridge)
+pred_ridge_train <- as.vector(
+  predict(cv.ridge, s = "lambda.min", newx = X)
+)
+rmse_ridge_train <- sqrt(mean((y - pred_ridge_train)^2))
+pred_ridge_test <- as.vector(
+  predict(cv.ridge, s = "lambda.min", newx = X_test)
+)
+rmse_ridge_test <- sqrt(mean((y_test - pred_ridge_test)^2))
+best.lambda.ridge <- cv.ridge$lambda.min
+best.lambda.ridge
+
+ridge.best <- glmnet(X, y, alpha = 0, lambda = best.lambda.ridge)
+coef(ridge.best)  
+```
+
+```{r}
+## Build design matrices
+X_train <- model.matrix(Exam_Score ~ ., data = train_dat)[, -1]
+y_train <- train_dat$Exam_Score
+
+X_test  <- model.matrix(Exam_Score ~ ., data = test_dat)[, -1]
+y_test  <- test_dat$Exam_Score
+
+## Ridge:
+set.seed(42)
+cv.ridge <- cv.glmnet(X_train, y_train, alpha = 0)
+best.lambda.ridge <- cv.ridge$lambda.min
+
+pred_ridge_test <- as.vector(predict(cv.ridge,
+                                     s = "lambda.min",
+                                     newx = X_test))
+rmse_ridge_test <- sqrt(mean((y_test - pred_ridge_test)^2))
+
+## Lasso:
+set.seed(42)
+cv.lasso <- cv.glmnet(X_train, y_train, alpha = 1)
+best.lambda.lasso <- cv.lasso$lambda.min
+
+pred_lasso_test <- as.vector(predict(cv.lasso,
+                                     s = "lambda.min",
+                                     newx = X_test))
+rmse_lasso_test <- sqrt(mean((y_test - pred_lasso_test)^2))
+
+## Comparison:
+cat("Ridge (alpha = 0):\n")
+cat("  best lambda =", best.lambda.ridge, "\n")
+cat("  Test RMSE   =", rmse_ridge_test, "\n\n")
+
+cat("Lasso (alpha = 1):\n")
+cat("  best lambda =", best.lambda.lasso, "\n")
+cat("  Test RMSE   =", rmse_lasso_test, "\n")
+```
+
+```{r}
+base <- lm(Exam_Score ~ ., data = train_dat)
+step_mod <- step(
+  base,
+  scope = list(lower = ~ .,
+               upper = ~ (.)^2),
+  direction = "both",
+  trace = 0)
+summary(step_mod)
+adjR2_step <- summary(step_mod)$adj.r.squared
+y_train           <- train_dat$Exam_Score
+yhat_step_train   <- predict(step_mod, newdata = train_dat)
+rmse_step_train <- sqrt(mean((y_train - yhat_step_train)^2))
+y_test        <- test_dat$Exam_Score
+yhat_step_test <- predict(step_mod, newdata = test_dat)
+rmse_step_test <- sqrt(mean((y_test - yhat_step_test)^2))
+```
+
+```{r}
+pred_step <- predict(step_mod, newdata = test_dat)
+rmse_step <- sqrt(mean((test_dat$Exam_Score - pred_step)^2))
+rmse_step
+```
+
+# Lasso on “all interactions” and let it shrink
+```{r}
+X_train <- model.matrix(Exam_Score ~ (.)^2, data = train_dat)[, -1]
+y_train <- train_dat$Exam_Score
+
+X_test  <- model.matrix(Exam_Score ~ (.)^2, data = test_dat)[, -1]
+y_test  <- test_dat$Exam_Score
+set.seed(42)
+cv.lasso_int <- cv.glmnet(X_train, y_train, alpha = 1)
+
+best.lambda.lasso_int <- cv.lasso_int$lambda.min
+
+pred_lasso_int_train <- as.vector(
+  predict(cv.lasso_int, s = "lambda.min", newx = X_train)
+)
+rmse_lasso_int_train <- sqrt(mean((y_train - pred_lasso_int_train)^2))
+pred_lasso_int_test <- as.vector(
+  predict(cv.lasso_int, s = "lambda.min", newx = X_test)
+)
+rmse_lasso_int_test <- sqrt(mean((y_test - pred_lasso_int_test)^2))
+
+lasso_coef <- coef(cv.lasso_int, s = "lambda.1se")
+lasso_nonzero <- lasso_coef[lasso_coef[, 1] != 0, , drop = FALSE]
+lasso_nonzero
+```
+
+```{r}
+n <- length(y_train)
+sst <- sum((y_train - mean(y_train))^2)
+lasso_int_coef <- coef(cv.lasso_int, s = "lambda.min")
+p_lasso_int <- sum(lasso_int_coef[-1, 1] != 0)
+yhat_lasso_int_train <- as.vector(
+  predict(cv.lasso_int, s = "lambda.min", newx = X_train)
+)
+sse_lasso_int <- sum((y_train - yhat_lasso_int_train)^2)
+R2_lasso_int <- 1 - sse_lasso_int / sst
+adjR2_lasso_int <- 1 - (1 - R2_lasso_int) * (n - 1) / (n - p_lasso_int - 1)
+
+adjR2_lasso_int
+```
+
+```{r}
+pred_lasso <- as.vector(predict(cv.lasso_int, s = "lambda.1se", newx = X_test))
+rmse_lasso <- sqrt(mean((y_test - pred_lasso)^2))
+rmse_lasso
+```
+
+Adjusted R² for Lasso:
+```{r}
+n <- length(y_train)
+lasso_coef <- coef(cv.lasso, s = "lambda.min")
+p_lasso <- sum(lasso_coef[-1] != 0)
+yhat_lasso <- as.vector(predict(cv.lasso_int, s = "lambda.min", newx = X_train))
+sse_lasso <- sum((y_train - yhat_lasso)^2)
+sst <- sum((y_train - mean(y_train))^2)
+R2_lasso <- 1 - sse_lasso / sst
+adjR2_lasso <- 1 - (1 - R2_lasso) * (n - 1) / (n - p_lasso - 1)
+adjR2_lasso
+```
+
+Adjusted R² for Ridge:
+```{r}
+X_train <- model.matrix(Exam_Score ~ ., data = train_dat)[, -1]
+y_train <- train_dat$Exam_Score
+
+n <- length(y_train)
+sst <- sum((y_train - mean(y_train))^2)
+set.seed(42)
+cv.ridge <- cv.glmnet(X_train, y_train, alpha = 0)
+
+ridge_coef <- coef(cv.ridge, s = "lambda.min")
+p_ridge    <- length(ridge_coef) - 1
+
+yhat_ridge <- as.vector(
+  predict(cv.ridge, s = "lambda.min", newx = X_train)
+)
+
+sse_ridge <- sum((y_train - yhat_ridge)^2)
+R2_ridge  <- 1 - sse_ridge / sst
+
+adjR2_ridge <- 1 - (1 - R2_ridge) * (n - 1) / (n - p_ridge - 1)
+adjR2_ridge
+```
+
+```{r}
+model_summary <- tibble::tibble(
+  Method     = c("OLS (lm)",
+                 "OLS + interactions",
+                 "Ridge",
+                 "Lasso",
+                 "Lasso + interactions"),
+  Structure  = c("All main effects",
+                 "Main + selected 2-way interactions",
+                 "All main effects",
+                 "All main effects",
+                 "Main + all 2-way interactions"),
+  Lambda     = c(NA,
+                 NA,
+                 best.lambda.ridge,
+                 best.lambda.lasso,
+                 best.lambda.lasso_int),
+  Train_RMSE = c(rmse_lm_train,
+                 rmse_step_train,
+                 rmse_ridge_train,
+                 rmse_lasso_train,
+                 rmse_lasso_int_train),
+  Test_RMSE  = c(rmse_lm_test,
+                 rmse_step_test,
+                 rmse_ridge_test,
+                 rmse_lasso_test,
+                 rmse_lasso_int_test),
+  Adj_R2     = c(adjR2_lm,
+                 adjR2_step,
+                 adjR2_ridge,
+                 adjR2_lasso,
+                 adjR2_lasso_int)
+)
+
+model_summary %>%
+  mutate(
+    Lambda     = round(Lambda, 5),
+    Train_RMSE = round(Train_RMSE, 3),
+    Test_RMSE  = round(Test_RMSE, 3),
+    Adj_R2     = round(Adj_R2, 3)
+  ) %>%
+  kable(
+    caption = "Model comparison: structure and performance",
+    align = "lcccccc"
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r}
+# Plot of RMSE:
+ggplot(model_summary, aes(x=reorder(Method, Test_RMSE), y=Test_RMSE)) +
+  geom_col() + coord_flip() + theme_minimal() +
+  labs(x=NULL, y="Test RMSE")
+```
+
+```{r fig.width=13, fig.height=4.5}
+# Plot of Error:
+op <- par(mfrow = c(1, 3),
+          mar = c(4.5, 4.5, 7, 1),
+          cex = 0.85)
+
+plot(cv.ridge, main = "")
+mtext("Ridge CV", side = 3, line = 4, font = 2)
+
+plot(cv.lasso, main = "")
+mtext("Lasso CV", side = 3, line = 4, font = 2)
+
+plot(cv.lasso_int, main = "")
+mtext("Lasso + Interactions CV", side = 3, line = 4, font = 2)
+
+par(op)
+```
+
+```{r}
+df <- read.csv("StudentPerformanceFactors.csv")
+df <- df %>%
+  mutate(
+    Parental_Involvement = factor(Parental_Involvement, levels = c("Low","Medium","High")),
+    Access_to_Resources = factor(Access_to_Resources, levels = c("Low","Medium","High")),
+    Motivation_Level= factor(Motivation_Level, levels = c("Low","Medium","High")),
+    Teacher_Quality = factor(Teacher_Quality, levels = c("Low","Medium","High")),
+    Peer_Influence = factor(Peer_Influence, levels = c("Negative","Neutral","Positive")),
+    Learning_Disabilities = factor(Learning_Disabilities, levels = c("No","Yes"))
+  )
+
+# Scatterplot stats:
+cor_hours <- cor(df$Exam_Score, df$Hours_Studied, use = "complete.obs")
+cor_att   <- cor(df$Exam_Score, df$Attendance,   use = "complete.obs")
+
+b_hours <- coef(lm(Exam_Score ~ Hours_Studied, data=df))[2]
+b_att   <- coef(lm(Exam_Score ~ Attendance,   data=df))[2]
+
+# Scatterplots:
+p1 <- ggplot(df, aes(Hours_Studied, Exam_Score)) +
+  geom_jitter(width = 0.15, height = 0, alpha = 0.35) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Exam_Score vs Hours_Studied",
+    subtitle = paste0("Correlation ≈ ", round(cor_hours, 2)),
+    x = "Hours_Studied", y = "Exam_Score"
+  ) +
+  theme_bw()
+
+p2 <- ggplot(df, aes(Attendance, Exam_Score)) +
+  geom_jitter(width = 0.15, height = 0, alpha = 0.35) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Exam_Score vs Attendance",
+    subtitle = paste0("Correlation ≈ ", round(cor_att, 2)),
+    x = "Attendance (%)", y = "Exam_Score"
+  ) +
+  theme_bw()
+
+p1
+p2
+
+
+library(tidyr)
+# 4 ordinal factors -> one 2×2 panel figure
+df4 <- df %>%
+  pivot_longer(
+    cols = c(Parental_Involvement, Access_to_Resources, Motivation_Level, Teacher_Quality),
+    names_to = "FactorName",
+    values_to = "Level"
+  ) %>%
+  mutate(
+    FactorName = factor(
+      FactorName,
+      levels = c("Parental_Involvement","Access_to_Resources","Motivation_Level","Teacher_Quality")
+    ),
+    Level = factor(Level, levels = c("Low","Medium","High"))
+  )
+
+p_box4 <- ggplot(df4, aes(x = Level, y = Exam_Score)) +
+  geom_boxplot(outlier.alpha = 0.35) +
+  facet_wrap(~FactorName, ncol = 2, scales = "free_x") +
+  labs(
+    title = "Exam_Score by supportive context factors",
+    x = NULL, y = "Exam_Score"
+  ) +
+  theme_bw()
+
+p_box4
+
+# 2 other factors -> one 1×2 panel figure:
+df2 <- df %>%
+  pivot_longer(
+    cols = c(Learning_Disabilities, Peer_Influence),
+    names_to = "FactorName",
+    values_to = "Level"
+  ) %>%
+  mutate(
+    FactorName = factor(FactorName, levels = c("Learning_Disabilities","Peer_Influence")),
+   
+    Level = factor(Level, levels = c("No","Yes","Negative","Neutral","Positive"))
+  )
+
+p_box2 <- ggplot(df2, aes(x = Level, y = Exam_Score)) +
+  geom_boxplot(outlier.alpha = 0.35) +
+  facet_wrap(~FactorName, ncol = 2, scales = "free_x") +
+  labs(
+    title = "Exam_Score by learning/disability and peer influence",
+    x = NULL, y = "Exam_Score"
+  ) +
+  theme_bw()
+
+p_box2
+
+# Quantify the shifts (means/medians) in ONE table:
+summ_all <- bind_rows(
+  df4 %>% mutate(Group = "Ordinal_4"),
+  df2 %>% mutate(Group = "Other_2")
+) %>%
+  group_by(Group, FactorName, Level) %>%
+  summarise(
+    n = n(),
+    mean = mean(Exam_Score, na.rm = TRUE),
+    median = median(Exam_Score, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+summ_all
+
+# Slope:
+cat("Slope (Hours_Studied):", round(b_hours, 3), "points per hour; ~", round(10*b_hours, 2), "per 10 hours\n")
+cat("Slope (Attendance):", round(b_att, 3), "points per 1%; ~", round(10*b_att, 2), "per 10%\n")
+```
+
+
+```{r}
+# Cook's distance plot (outliers / influence)
+plot(cooks.distance(lm_based), type = "h",
+     main = "Cook's Distance",
+     ylab = "Cook's D",
+     xlab = "Observation")
+abline(h = 4 / length(lm_based$fitted.values), lty = 2)
+
+cd <- cooks.distance(lm_based)
+top10 <- order(cd, decreasing = TRUE)[1:10]
+
+influence_table <- data.frame(
+obs_id = top10,
+cooksD = round(cd[top10], 4)
+)
+influence_table
+```
+
+```{r}
+# Component + residual plots (linearity check)
+library(car)
+crPlots(lm_based, ask = FALSE)
+
+#Breusch–Pagan test (constant variance check)
+library(lmtest)
+bptest(lm_based)
+```
+
+```{r}
+# Make 2 example student profiles and compute CI / PI
+
+# helper: mode for factors
+get_mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# create a "typical" profile using medians/modes from training data
+new_typical <- train_dat[1, , drop = FALSE]
+for (v in names(train_dat)) {
+  if (v == "Exam_Score") next
+  if (is.numeric(train_dat[[v]])) {
+    new_typical[[v]] <- median(train_dat[[v]], na.rm = TRUE)
+  } else {
+    new_typical[[v]] <- get_mode(train_dat[[v]])
+  }
+}
+
+# high-support profile
+new_high <- new_typical
+new_high$Hours_Studied <- quantile(train_dat$Hours_Studied, 0.75, na.rm = TRUE)
+new_high$Attendance <- quantile(train_dat$Attendance, 0.75, na.rm = TRUE)
+new_high$Tutoring_Sessions <- quantile(train_dat$Tutoring_Sessions, 0.75, na.rm = TRUE)
+
+if ("Access_to_Resources" %in% names(train_dat)) new_high$Access_to_Resources <- "High"
+if ("Parental_Involvement" %in% names(train_dat)) new_high$Parental_Involvement <- "High"
+if ("Internet_Access" %in% names(train_dat)) new_high$Internet_Access <- "Yes"
+
+# low-support profile
+new_low <- new_typical
+new_low$Hours_Studied <- quantile(train_dat$Hours_Studied, 0.25, na.rm = TRUE)
+new_low$Attendance <- quantile(train_dat$Attendance, 0.25, na.rm = TRUE)
+new_low$Tutoring_Sessions <- quantile(train_dat$Tutoring_Sessions, 0.25, na.rm = TRUE)
+
+if ("Access_to_Resources" %in% names(train_dat)) new_low$Access_to_Resources <- "Low"
+if ("Parental_Involvement" %in% names(train_dat)) new_low$Parental_Involvement <- "Low"
+if ("Internet_Access" %in% names(train_dat)) new_low$Internet_Access <- "No"
+
+# compute intervals
+ci_high <- predict(lm_based, newdata = new_high,
+                   interval = "confidence", level = 0.95)
+pi_high <- predict(lm_based, newdata = new_high,
+                   interval = "prediction", level = 0.95)
+
+ci_low <- predict(lm_based, newdata = new_low,
+                  interval = "confidence", level = 0.95)
+pi_low <- predict(lm_based, newdata = new_low,
+                  interval = "prediction", level = 0.95)
+
+interval_table <- data.frame(
+  Profile = c("High-support example", "Low-support example"),
+  Predicted = round(c(ci_high[1], ci_low[1]), 2),
+  CI_Lower  = round(c(ci_high[2], ci_low[2]), 2),
+  CI_Upper  = round(c(ci_high[3], ci_low[3]), 2),
+  PI_Lower  = round(c(pi_high[2], pi_low[2]), 2),
+  PI_Upper  = round(c(pi_high[3], pi_low[3]), 2)
+)
+
+interval_table
+
+```
+
+```{r}
+# Extract coefficients table
+coef_tab <- as.data.frame(summary(lm_based)$coefficients)
+coef_tab$Variable <- rownames(coef_tab)
+rownames(coef_tab) <- NULL
+
+# keep a smaller set (top by smallest p-value)
+coef_tab <- coef_tab[order(coef_tab$`Pr(>|t|)`), ]
+coef_small <- head(coef_tab, 12)
+
+coef_small
+
+
+```
+
+```{r}
+# Predicted vs Actual on test set (visual validation)
+
+pred_test <- predict(lm_based, newdata = test_dat)
+
+plot(test_dat$Exam_Score, pred_test,
+     xlab = "Actual Exam_Score (test)",
+     ylab = "Predicted Exam_Score",
+     main = "Predicted vs Actual (Test Set)")
+abline(0, 1, lty = 2)
+```
